@@ -1,0 +1,30 @@
+                     _     _            _
+ _ __  ___ ___      | |__ | | ___   ___| | __
+| '_ \/ __/ __|_____| '_ \| |/ _ \ / __| |/ /
+| | | \__ \__ \_____| |_) | | (_) | (__|   <
+|_| |_|___/___/     |_.__/|_|\___/ \___|_|\_\
+
+Overview
+========
+
+nss-block is a simple and transparent ad blocking solution for systems running
+glibc (http://www.gnu.org/software/libc/).
+
+It's implemented as a dummy DNS resolver that redirects all domain names
+specified under /etc/hosts.blacklist to 127.0.0.1.
+
+Usage
+=====
+  1) Build and install nss-block
+  2) Add "block" to /etc/nsswitch.conf, under "hosts"
+  3) Create /etc/hosts.blacklist and put each domain name you wish to block in
+     a separate line
+
+Credits and Legal Information
+=============================
+
+nss-block is free and unencumbered software released under the terms of the MIT
+license; see COPYING for the license text. For a list of its authors and
+contributors, see AUTHORS.
+
+The ASCII art logo at the top was made using FIGlet (http://www.figlet.org/).
