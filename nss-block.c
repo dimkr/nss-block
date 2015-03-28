@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <pthread.h>
+#include <fnmatch.h>
 #include <netdb.h>
 #include <nss.h>
 
@@ -95,19 +96,29 @@ enum nss_status _nss_block_gethostbyname2_r(const char *name,
 		if (0 == len)
 			continue;
 
+		/* ignore comments */
+		if ('#' == bname[0])
+			continue;
+
 		/* trim trailing line breaks */
 		--len;
 		if ('\n' == bname[len])
 			bname[len] = '\0';
 
-		if (0 != strcmp(name, bname))
-			continue;
-
 		/* if a match was found, return localhost as the address */
-		(void) memcpy(ret, &localhost, sizeof(struct hostent));
-		*result = ret;
-		res = NSS_STATUS_SUCCESS;
-		goto unlock;
+		switch (fnmatch(bname, name, FNM_PATHNAME)) {
+			case FNM_NOMATCH:
+				break;
+
+			case 0:
+				(void) memcpy(ret, &localhost, sizeof(struct hostent));
+				*result = ret;
+				res = NSS_STATUS_SUCCESS;
+				goto unlock;
+
+			default:
+				goto unlock;
+		}
 	} while (1);
 
 	res = NSS_STATUS_NOTFOUND;
