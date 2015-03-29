@@ -37,6 +37,10 @@ static struct in_addr loopback;
 static const struct in_addr *addr_list[] = {&loopback, NULL};
 static struct hostent localhost;
 
+static struct in6_addr loopback6 = IN6ADDR_LOOPBACK_INIT;
+static const struct in6_addr *addr_list6[] = {&loopback6, NULL};
+static struct hostent localhost6;
+
 static FILE *blist;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -52,8 +56,14 @@ static void ctor()
 	localhost.h_name = "localhost";
 	localhost.h_aliases = aliases;
 	localhost.h_addrtype = AF_INET;
-	localhost.h_length = sizeof(struct sockaddr_in);
+	localhost.h_length = sizeof(struct in_addr);
 	localhost.h_addr_list = (char **) addr_list;
+
+	localhost6.h_name = localhost.h_name;
+	localhost6.h_aliases = localhost.h_aliases;
+	localhost6.h_addrtype = AF_INET6;
+	localhost6.h_length = sizeof(struct in6_addr);
+	localhost6.h_addr_list = (char **) addr_list6;
 }
 
 __attribute__((destructor))
@@ -68,7 +78,7 @@ enum nss_status _nss_block_gethostbyname2_r(const char *name,
                                             struct hostent *ret,
                                             char *buf,
                                             size_t buflen,
-                                            struct hostent **result,
+                                            int *errnop,
                                             int *h_errnop)
 {
 	char bname[MAX_NAME_LEN];
@@ -87,9 +97,11 @@ enum nss_status _nss_block_gethostbyname2_r(const char *name,
 
 	do {
 		if (NULL == fgets(bname, sizeof(bname), blist)) {
-			if (0 != feof(blist))
+			if (0 != feof(blist)) {
+				res = NSS_STATUS_NOTFOUND;
 				break;
-			goto unlock;
+			}
+			break;
 		}
 
 		len = strlen(bname);
@@ -108,20 +120,31 @@ enum nss_status _nss_block_gethostbyname2_r(const char *name,
 		/* if a match was found, return localhost as the address */
 		switch (fnmatch(bname, name, FNM_PATHNAME)) {
 			case FNM_NOMATCH:
-				break;
+				continue;
 
 			case 0:
+				break;
+
+			default:
+				goto unlock;
+		}
+
+		switch (af) {
+			case AF_INET:
 				(void) memcpy(ret, &localhost, sizeof(struct hostent));
-				*result = ret;
 				res = NSS_STATUS_SUCCESS;
 				goto unlock;
+
+			case AF_INET6:
+				(void) memcpy(ret, &localhost6, sizeof(struct hostent));
+				res = NSS_STATUS_SUCCESS;
+
+				/* fall through */
 
 			default:
 				goto unlock;
 		}
 	} while (1);
-
-	res = NSS_STATUS_NOTFOUND;
 
 unlock:
 	(void) pthread_mutex_unlock(&lock);
