@@ -18,7 +18,7 @@ Usage
   1) Build and install nss-block
   2) Add "block" to /etc/nsswitch.conf, under "hosts"
   3) Create /etc/hosts.blacklist and put each domain name you wish to block in
-     a separate line; wildcards are supported
+     a separate line
 
 Credits and Legal Information
 =============================

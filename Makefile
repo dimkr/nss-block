@@ -7,6 +7,7 @@ DOC_DIR ?= usr/share/doc/nss-block
 
 CFLAGS += -Wall -pedantic -pthread
 LDFLAGS += -shared -pthread
+LIBS += -lz
 
 SRCS = $(wildcard *.c)
 OBJECTS = $(SRCS:.c=.o)
@@ -16,7 +17,7 @@ HEADERS = $(wildcard *.h)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 libnss_block.so.2: $(OBJECTS)
-	$(CC) -o $@ $^ $(LDFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 clean:
 	rm -f libnss_block.so.2 $(OBJECTS)

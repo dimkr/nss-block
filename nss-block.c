@@ -1,7 +1,7 @@
 /*
  * this file is part of nss-block.
  *
- * Copyright (c) 2015 Dima Krasner
+ * Copyright (c) 2015, 2016 Dima Krasner
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -30,47 +31,72 @@
 #include <netdb.h>
 #include <nss.h>
 
-#define MAX_NAME_LEN (128)
+#include <zlib.h>
+
+#define MAX_NAME_LEN 128
+#define MAX_HOSTS (64 * 1024)
 
 static char *aliases[] = {NULL};
+
 static struct in_addr loopback;
 static const struct in_addr *addr_list[] = {&loopback, NULL};
-static struct hostent localhost;
 
 static struct in6_addr loopback6 = IN6ADDR_LOOPBACK_INIT;
 static const struct in6_addr *addr_list6[] = {&loopback6, NULL};
-static struct hostent localhost6;
 
-static FILE *blist;
-static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static uLong *hashes = NULL;
+static uLong init;
+static int nhashes;
 
 __attribute__((constructor))
-static void ctor()
+static void ctor(void)
 {
+	char bname[MAX_NAME_LEN];
+	FILE *blist;
+	int len, nlen;
+
 	blist = fopen(_PATH_HOSTS".blacklist", "r");
-	if (NULL == blist)
+	if (!blist)
 		return;
 
+	hashes = malloc(sizeof(uLong) * MAX_HOSTS);
+	if (hashes) {
+		init = crc32(0L, Z_NULL, 0L);
+
+		for (nhashes = 0;
+		     (nhashes < MAX_HOSTS) && fgets(bname, sizeof(bname), blist);
+		     ++nhashes) {
+			len = strlen(bname);
+			/* blank lines and ignore comments */
+			if (!len || bname[0] == '#')
+				continue;
+
+			/* trim trailing line breaks */
+			nlen = len - 1;
+			if (bname[nlen] == '\n') {
+				bname[nlen] = '\0';
+				len = nlen;
+			}
+
+			hashes[nhashes] = crc32(init, (const Bytef *)bname, len);
+		}
+
+		if (!feof(blist)) {
+			free(hashes);
+			hashes = NULL;
+		}
+	}
+
+	fclose(blist);
+
 	loopback.s_addr = htonl(INADDR_LOOPBACK);
-
-	localhost.h_name = "localhost";
-	localhost.h_aliases = aliases;
-	localhost.h_addrtype = AF_INET;
-	localhost.h_length = sizeof(struct in_addr);
-	localhost.h_addr_list = (char **) addr_list;
-
-	localhost6.h_name = localhost.h_name;
-	localhost6.h_aliases = localhost.h_aliases;
-	localhost6.h_addrtype = AF_INET6;
-	localhost6.h_length = sizeof(struct in6_addr);
-	localhost6.h_addr_list = (char **) addr_list6;
 }
 
 __attribute__((destructor))
-static void dtor()
+static void dtor(void)
 {
-	if (NULL != blist)
-		(void) fclose(blist);
+	if (hashes)
+		free(hashes);
 }
 
 enum nss_status _nss_block_gethostbyname2_r(const char *name,
@@ -81,74 +107,37 @@ enum nss_status _nss_block_gethostbyname2_r(const char *name,
                                             int *errnop,
                                             int *h_errnop)
 {
-	char bname[MAX_NAME_LEN];
-	int len;
-	enum nss_status res = NSS_STATUS_UNAVAIL;
+	uLong hash;
+	int i;
 
-	if (NULL == blist)
-		goto end;
+	if (!hashes)
+		return NSS_STATUS_UNAVAIL;
 
-	if (0 != pthread_mutex_lock(&lock))
-		goto end;
+	if ((af == AF_INET) || (af == AF_INET6)) {
+		hash = crc32(init, (const Bytef *)name, strlen(name));
 
-	/* read the blacklist, line by line */
-	if (0 != fseek(blist, 0L, SEEK_SET))
-		goto end;
+		for (i = 0; i < nhashes; ++i) {
+			/* if a match was found, return localhost as the address */
+			if (hashes[i] == hash) {
+				if (af == AF_INET) {
+					ret->h_name = "localhost";
+					ret->h_aliases = aliases;
+					ret->h_addrtype = AF_INET;
+					ret->h_length = sizeof(struct in_addr);
+					ret->h_addr_list = (char **)addr_list;
+				}
+				else {
+					ret->h_name = "localhost";
+					ret->h_aliases = aliases;
+					ret->h_addrtype = AF_INET6;
+					ret->h_length = sizeof(struct in6_addr);
+					ret->h_addr_list = (char **)addr_list6;
+				}
 
-	do {
-		if (NULL == fgets(bname, sizeof(bname), blist)) {
-			if (0 != feof(blist)) {
-				res = NSS_STATUS_NOTFOUND;
-				break;
+				return NSS_STATUS_SUCCESS;
 			}
-			break;
 		}
+	}
 
-		len = strlen(bname);
-		if (0 == len)
-			continue;
-
-		/* ignore comments */
-		if ('#' == bname[0])
-			continue;
-
-		/* trim trailing line breaks */
-		--len;
-		if ('\n' == bname[len])
-			bname[len] = '\0';
-
-		/* if a match was found, return localhost as the address */
-		switch (fnmatch(bname, name, FNM_PATHNAME)) {
-			case FNM_NOMATCH:
-				continue;
-
-			case 0:
-				break;
-
-			default:
-				goto unlock;
-		}
-
-		switch (af) {
-			case AF_INET:
-				(void) memcpy(ret, &localhost, sizeof(struct hostent));
-				res = NSS_STATUS_SUCCESS;
-				goto unlock;
-
-			case AF_INET6:
-				(void) memcpy(ret, &localhost6, sizeof(struct hostent));
-				res = NSS_STATUS_SUCCESS;
-
-				/* fall through */
-
-			default:
-				goto unlock;
-		}
-	} while (1);
-
-unlock:
-	(void) pthread_mutex_unlock(&lock);
-
-end:
-	return res;
+	return NSS_STATUS_NOTFOUND;
 }
